@@ -1,0 +1,12 @@
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/spartanCrimson</item>
+        <item name="colorPrimaryDark">@color/upMaroon</item>
+        <item name="colorAccent">@color/spartanCrimson</item>
+        <item name="android:windowBackground">@color/snow</item>
+    </style>
+
+</resources>
