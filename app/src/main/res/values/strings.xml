@@ -1,3 +1,5 @@
 <resources>
-    <string name="app_name">Wi-Fi Scanner</string>
+    <string name="app_name">Wi-Fi Tag Finder</string>
+    <string name="FILE_NAME_PATTERN">HISRO-yyyy-MM-dd\'T\'HH:mm:ss.SSSZ</string>
+    <string name="separator">;</string>
 </resources>

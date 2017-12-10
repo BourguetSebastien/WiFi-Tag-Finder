@@ -10,6 +10,7 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.support.v4.app.ActivityCompat;
@@ -18,9 +19,7 @@ import android.support.v7.app.AppCompatActivity;
 import android.text.Html;
 import android.util.Log;
 import android.view.View;
-import android.view.animation.AlphaAnimation;
 import android.view.animation.Animation;
-import android.view.animation.AnimationSet;
 import android.view.animation.AnimationUtils;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
@@ -32,28 +31,31 @@ import android.widget.TextView;
 
 import com.jjoe64.graphview.GraphView;
 import com.jjoe64.graphview.GridLabelRenderer;
-import com.jjoe64.graphview.helper.DateAsXAxisLabelFormatter;
 import com.jjoe64.graphview.series.DataPoint;
 import com.jjoe64.graphview.series.LineGraphSeries;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
-import java.util.Objects;
-import java.util.Timer;
-import java.util.TimerTask;
-import java.util.stream.Collectors;
+
+import static java.lang.String.format;
 
 public class MainActivity extends AppCompatActivity {
-    private static final int PERIOD = 1_500;
+    private static final int PERIOD = 2_000;
     private static final int MAX_LEVEL = 20;
-    private static final int TIME_DISPLAYED = 90_000;
+    private static final int TIME_DISPLAYED = 30_000;
     private static final int NB_DISPLAYED_POINTS = TIME_DISPLAYED/PERIOD;
     private static final int BAND_2GHZ = 1;
     private static final int BAND_5GHZ = 2;
     private static final Integer[] CHANNELS_2GHZ = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     private static final Integer[] CHANNELS_5GHZ = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140};
+    private static final String[] WIDTHS = {"20 MHz", "40 MHz", "80 MHz", "160 MHz", "Other"};
     // PERMISSIONS
     private static final String[] REQUIRED_PERMISSIONS =  {Manifest.permission.ACCESS_WIFI_STATE, Manifest.permission.CHANGE_WIFI_STATE, Manifest.permission.ACCESS_COARSE_LOCATION};
     private static final int ACCESS_WIFI = 0x1234;
@@ -73,7 +75,6 @@ public class MainActivity extends AppCompatActivity {
     private LineGraphSeries<DataPoint> channelSeries;
     private LineGraphSeries<DataPoint> levelSeries;
     private DataPoint points[];
-    private double lastIndex = 0;
 
     private ArrayAdapter<String> adapter;
 
@@ -85,9 +86,9 @@ public class MainActivity extends AppCompatActivity {
     private String selectedBSSID = "";
     private long timeStart;
 
-    // TASK
-    private TimerTask timerTask;
-    private Timer timer;
+    // FILE
+    final private SimpleDateFormat format = new SimpleDateFormat(getString(R.string.FILE_NAME_PATTERN));
+    OutputStream outputStream;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -104,7 +105,11 @@ public class MainActivity extends AppCompatActivity {
         }
         wifiEnabled = checkPermissions();
         if (wifiEnabled) {
-            initTimerTask();
+            initFile();
+            wifi.startScan();
+        }
+        else {
+            // FIXME SHOW MESSAGE
         }
     }
 
@@ -121,7 +126,7 @@ public class MainActivity extends AppCompatActivity {
         this.activityIndicator = findViewById(R.id.activityIndicator);
         this.chronometer = findViewById(R.id.chronometer);
 
-        this.adapter = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, new ArrayList<String>());
+        this.adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, new ArrayList<String>());
         this.selector.setAdapter(this.adapter);
         this.selector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
@@ -138,9 +143,12 @@ public class MainActivity extends AppCompatActivity {
 
         this.levelSeries = new LineGraphSeries<>();
         this.levelSeries.setAnimated(true);
-        this.levelSeries.setColor(R.color.spartanCrimson);
-//        this.levelSeries.setDrawBackground(true);
-//        this.levelSeries.setBackgroundColor(R.drawable.red_gradient);
+        this.levelSeries.setDrawBackground(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Log.i("APP", "Setting colors");
+            this.levelSeries.setColor(getColor(R.color.spartanCrimson));
+            this.levelSeries.setBackgroundColor(getColor(R.color.spartanCrimson));
+        }
         this.channelGraph.getGridLabelRenderer().setGridStyle(GridLabelRenderer.GridStyle.VERTICAL);
         this.levelGraph.getGridLabelRenderer().setGridStyle(GridLabelRenderer.GridStyle.NONE);
         this.levelGraph.addSeries(this.levelSeries);
@@ -153,6 +161,7 @@ public class MainActivity extends AppCompatActivity {
 
         this.levelGraph.getGridLabelRenderer().setNumVerticalLabels(4);
 
+        /* AXIS LEGENDS - NOT USED, TOO BIG FOR A SMALL SCREEN */
 //        this.channelGraph.getGridLabelRenderer().setVerticalAxisTitle("Signal level in dB");
 //        this.channelGraph.getGridLabelRenderer().setHorizontalAxisTitle("Channel");
 
@@ -162,7 +171,7 @@ public class MainActivity extends AppCompatActivity {
         this.level.setMax(MAX_LEVEL);
 
         Animation animation = AnimationUtils.loadAnimation(this, android.R.anim.fade_in);
-        animation.setDuration(400);
+        animation.setDuration(500);
         animation.setRepeatCount(Animation.INFINITE);
         animation.setRepeatMode(Animation.REVERSE);
         activityIndicator.startAnimation(animation);
@@ -193,23 +202,9 @@ public class MainActivity extends AppCompatActivity {
         this.channelGraph.getViewport().setMinX(this.channelSeries.getLowestValueX());
         this.channelGraph.getViewport().setMaxX(this.channelSeries.getHighestValueX());
         this.channelGraph.addSeries(this.channelSeries);
-    }
-
-    // beging timer
-    private void initTimerTask() {
-        // Create a time task
-        timerTask = new TimerTask() {
-
-            @Override
-            public void run() {
-                scanWifi();
-            }
-        };
-        //set a new Timer
-        timer = new Timer();
-
-        //schedule the timer, after the first 1000ms the TimerTask will run every 1000ms
-        timer.schedule(timerTask, 500, MainActivity.PERIOD); //
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            this.channelSeries.setColor(getColor(R.color.spartanCrimson));
+        }
     }
 
     private void initWifi() {
@@ -218,23 +213,15 @@ public class MainActivity extends AppCompatActivity {
         this.wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
     }
 
-    private void scanWifi() {
-        if (!wifiEnabled) {
-            Log.i("APP_INFO", "WIFI ACCESS and CHANGE not allowed");
-        }
-        wifi.setWifiEnabled(true);
-        wifi.startScan();
-    }
-
-    protected void updateUi(ScanResult ac) {
+    private void updateUi(ScanResult ac) {
         if (ac == null) return;
         chronometer.stop();
         int channel = convertFrequencyToChannel(ac.frequency);
-        this.name.setText(String.format("%s (%s)", ac.SSID, ac.BSSID));
-        this.frequency.setText(Html.fromHtml(String.format("<b>CH %d</b> - F:%d <i>(width: %d)</i>", channel, ac.frequency, ac.channelWidth)));
+        this.name.setText(format("%s (%s)", ac.SSID, ac.BSSID));
+        this.frequency.setText(Html.fromHtml(format("<b>CH %d</b> - F:%d <i>(width: %s)</i>", channel, ac.frequency, WIDTHS[ac.channelWidth])));
         this.security.setText(ac.capabilities);
         this.level.setProgress(WifiManager.calculateSignalLevel(ac.level, MAX_LEVEL));
-        this.labLevel.setText(String.format("%d dB", ac.level));
+        this.labLevel.setText(format("%d dB", ac.level));
         if(ac.capabilities.contains("WPA") || ac.capabilities.contains("WPA2") || ac.capabilities.contains("WEP")) {
             this.securityIcon.setImageResource(android.R.drawable.ic_secure);
         } else {
@@ -253,10 +240,27 @@ public class MainActivity extends AppCompatActivity {
         int index = indexOf(selectedBand == BAND_2GHZ ? CHANNELS_2GHZ : CHANNELS_5GHZ, channel);
         points[index] = new DataPoint(channel, ac.level);
         this.channelSeries.resetData(points);
-        lastIndex += PERIOD/1000;
-        //activityIndicator.setVisibility(activityIndicator.getVisibility() == View.VISIBLE ? View.INVISIBLE : View.VISIBLE);
+        String separator = getString(R.string.separator);
+        String line = format("%s (%s)%s%l%s%d%s%d%s%d", ac.SSID, ac.BSSID, separator, System.currentTimeMillis(), separator, ac.level, separator, channel, separator, ac.frequency);
+        try {
+            this.outputStream.write(line.getBytes());
+        } catch (IOException e) {
+            Log.e("APP_FileSave", "Error when trying to write in a file");
+        }
         chronometer.setBase(SystemClock.elapsedRealtime());
         chronometer.start();
+    }
+
+    private boolean initFile() {
+        String fileName = format.format(new Date(System.currentTimeMillis()));
+        File file = new File(getFilesDir(), fileName);
+        try {
+            outputStream = openFileOutput(fileName, MODE_PRIVATE);
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            return false;
+        }
+        return true;
     }
 
     private boolean checkPermissions() {
@@ -325,16 +329,17 @@ public class MainActivity extends AppCompatActivity {
     protected class WifiReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context c, Intent intent) {
-            WifiManager wifiManager = (WifiManager) c.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            List<ScanResult> results = wifiManager.getScanResults();
+            wifi.startScan();
+            List<ScanResult> results = wifi.getScanResults();
 
-            adapter.clear();
-            for (ScanResult sc : results) {
-                adapter.add(sc.SSID + " (" + sc.BSSID + ")");
+            if (results.size() != adapter.getCount()) {
+                adapter.clear();
+                for (ScanResult sc : results) {
+                    adapter.add(sc.SSID + " (" + sc.BSSID + ")");
+                }
+                adapter.notifyDataSetChanged();
             }
-            adapter.notifyDataSetChanged();
             if (!selectedBSSID.isEmpty()) {
-//                List<ScanResult> r = results.stream().filter(a -> Objects.equals(a.BSSID, selectedBSSID)).collect(Collectors.toCollection(Collectors.toList()));
                 updateUi(findAP(results, selectedBSSID));
             }
         }
@@ -349,7 +354,7 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
-    public static int convertFrequencyToChannel(int freq) {
+    private static int convertFrequencyToChannel(int freq) {
         int resp=0;
         if (freq >= 2412 && freq <= 2484) {
             resp=  (freq - 2412) / 5 + 1;
@@ -359,7 +364,7 @@ public class MainActivity extends AppCompatActivity {
         return resp;
     }
 
-    public static <T> int indexOf(T[] arr, T val) {
+    private static <T> int indexOf(T[] arr, T val) {
         return Arrays.asList(arr).indexOf(val);
     }
 }
