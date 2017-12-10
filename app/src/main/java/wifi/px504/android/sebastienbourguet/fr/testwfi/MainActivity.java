@@ -28,6 +28,7 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.jjoe64.graphview.GraphView;
 import com.jjoe64.graphview.GridLabelRenderer;
@@ -46,11 +47,18 @@ import java.util.List;
 
 import static java.lang.String.format;
 
+/**
+ * @author Sebastien Bourguet
+ * @version 1.2
+ *
+ * Application
+ */
 public class MainActivity extends AppCompatActivity {
-    private static final int PERIOD = 2_000;
-    private static final int MAX_LEVEL = 20;
-    private static final int TIME_DISPLAYED = 30_000;
+    private static final int PERIOD = 4_000; // Average time between two scans
+    private static final int MAX_LEVEL = 20; // Max value to evaluate signal force received
+    private static final int TIME_DISPLAYED = 30_000; // Time displayed in historical graph (in ms)
     private static final int NB_DISPLAYED_POINTS = TIME_DISPLAYED/PERIOD;
+    // WIFI useful constants
     private static final int BAND_2GHZ = 1;
     private static final int BAND_5GHZ = 2;
     private static final Integer[] CHANNELS_2GHZ = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
@@ -58,9 +66,9 @@ public class MainActivity extends AppCompatActivity {
     private static final String[] WIDTHS = {"20 MHz", "40 MHz", "80 MHz", "160 MHz", "Other"};
     // PERMISSIONS
     private static final String[] REQUIRED_PERMISSIONS =  {Manifest.permission.ACCESS_WIFI_STATE, Manifest.permission.CHANGE_WIFI_STATE, Manifest.permission.ACCESS_COARSE_LOCATION};
-    private static final int ACCESS_WIFI = 0x1234;
-    private static final int CHANGE_WIFI = 0X5678;
-    private static final int ACCESS_LOCATION = 0x9101;
+    private static final int ACCESS_WIFI = 0x1234; // User defined
+    private static final int CHANGE_WIFI = 0X5678; // User defined
+    private static final int ACCESS_LOCATION = 0x9101; // User defined
     private static final int CODES[] = {ACCESS_WIFI, CHANGE_WIFI, ACCESS_LOCATION};
 
     // UI
@@ -75,7 +83,7 @@ public class MainActivity extends AppCompatActivity {
     private LineGraphSeries<DataPoint> channelSeries;
     private LineGraphSeries<DataPoint> levelSeries;
     private DataPoint points[];
-
+    // SPINNER
     private ArrayAdapter<String> adapter;
 
     // Wi-Fi
@@ -90,6 +98,11 @@ public class MainActivity extends AppCompatActivity {
     final private SimpleDateFormat format = new SimpleDateFormat(getString(R.string.FILE_NAME_PATTERN));
     OutputStream outputStream;
 
+    /**
+     * Method called when app is launched
+     * Init Wi-Fi, check if permissions are granted, and prepare UI.
+     * @param savedInstanceState param not used
+     */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -99,21 +112,26 @@ public class MainActivity extends AppCompatActivity {
 
         makeUI();
 
-        wifiEnabled = checkPermissions();
-        if (!wifiEnabled) {
+        wifiEnabled = checkPermissions(); // Check if permissions are granted
+        if (!wifiEnabled) { // Need to ask for permission
             getPermission();
+            wifiEnabled = checkPermissions();
         }
-        wifiEnabled = checkPermissions();
-        if (wifiEnabled) {
+        if (wifiEnabled) { // Permissions granted launch scanning
             initFile();
             wifi.startScan();
         }
-        else {
-            // FIXME SHOW MESSAGE
+        else { // Permission not granted, functionality not working
+            Toast.makeText(this, "Permissions are not granted, scan not launched", Toast.LENGTH_LONG);
         }
     }
 
+    /**
+     * Init UI
+     * Prepare all displayed elements
+     */
     private void makeUI() {
+        /* Get UI elements */
         this.selector = findViewById(R.id.selector);
         this.name = findViewById(R.id.name);
         this.frequency = findViewById(R.id.frequency);
@@ -126,12 +144,13 @@ public class MainActivity extends AppCompatActivity {
         this.activityIndicator = findViewById(R.id.activityIndicator);
         this.chronometer = findViewById(R.id.chronometer);
 
+        /* Adapter use to fill and display information in the spinner */
         this.adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, new ArrayList<String>());
         this.selector.setAdapter(this.adapter);
         this.selector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                String[] s = ((String) parent.getSelectedItem()).split("[()]");
+                String[] s = ((String) parent.getSelectedItem()).split("[()]"); // Keep BSSID information, contained between '()'
                 selectedBSSID = s[1];
             }
 
@@ -141,6 +160,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        /* Init graph */
         this.levelSeries = new LineGraphSeries<>();
         this.levelSeries.setAnimated(true);
         this.levelSeries.setDrawBackground(true);
@@ -170,6 +190,7 @@ public class MainActivity extends AppCompatActivity {
 
         this.level.setMax(MAX_LEVEL);
 
+        /* Animate activity indicator (blink) */
         Animation animation = AnimationUtils.loadAnimation(this, android.R.anim.fade_in);
         animation.setDuration(500);
         animation.setRepeatCount(Animation.INFINITE);
@@ -179,6 +200,11 @@ public class MainActivity extends AppCompatActivity {
         this.timeStart = System.currentTimeMillis();
     }
 
+    /**
+     * Prepare series used in Channel graph
+     * Set length of Collection with number of channel of WiFi Band
+     * @param band selected WiFi band
+     */
     private void initChannelGraph(int band) {
         switch (band) {
             case BAND_2GHZ:
@@ -207,12 +233,20 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Prepare receiver for WiFi SCAN Finished action
+     * Retrieve WiFi manager.
+     */
     private void initWifi() {
         this.wifiReceiver = new WifiReceiver();
         registerReceiver(this.wifiReceiver, new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION));
         this.wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
     }
 
+    /**
+     * Update displayed infomartion with selected Scan
+     * @param ac Scan displayed
+     */
     private void updateUi(ScanResult ac) {
         if (ac == null) return;
         chronometer.stop();
@@ -251,6 +285,10 @@ public class MainActivity extends AppCompatActivity {
         chronometer.start();
     }
 
+    /**
+     * Create and prepare file used to save received data
+     * @return False if file creation failed
+     */
     private boolean initFile() {
         String fileName = format.format(new Date(System.currentTimeMillis()));
         File file = new File(getFilesDir(), fileName);
@@ -263,6 +301,10 @@ public class MainActivity extends AppCompatActivity {
         return true;
     }
 
+    /**
+     * Check if need permission are GRANTED
+     * @return True if needed permissions are granted
+     */
     private boolean checkPermissions() {
         int access = 0;
         for (String perm : REQUIRED_PERMISSIONS) {
@@ -271,6 +313,9 @@ public class MainActivity extends AppCompatActivity {
         return access == PackageManager.PERMISSION_GRANTED* REQUIRED_PERMISSIONS.length;
     }
 
+    /**
+     * Aske for needed permission
+     */
     private void getPermission() {
         int i =  0;
         for (final String perm : REQUIRED_PERMISSIONS) {
@@ -303,6 +348,13 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Handle action called when user respond to permission ask
+     * Check if code correspond to requiered permission and set flag value
+     * @param requestCode User defined permission's code
+     * @param permissions Permission's name
+     * @param grantResults User response (0 if PERMISSION GRANTED)
+     */
     @Override
     public void onRequestPermissionsResult(int requestCode, String permissions[], int[] grantResults) {
         switch (requestCode) {
@@ -345,6 +397,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Find @{@link ScanResult} in given @{@link List} with corresponding BSSID name
+     * @param results @{@link List} of @{@link ScanResult} where to find element
+     * @param bssid BSSID name of wanted @{@link ScanResult}
+     * @return Corresponding @{@link ScanResult}
+     */
     private ScanResult findAP(List<ScanResult> results, String bssid) {
         for (ScanResult r : results) {
             if (r.BSSID.equals(bssid)) {
@@ -354,6 +412,11 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
+    /**
+     * Return channel number for given frequency
+     * @param freq frequency of signal
+     * @return corresponding channel
+     */
     private static int convertFrequencyToChannel(int freq) {
         int resp=0;
         if (freq >= 2412 && freq <= 2484) {
@@ -364,6 +427,13 @@ public class MainActivity extends AppCompatActivity {
         return resp;
     }
 
+    /**
+     * Find index of element in given @{@link java.util.Collection}
+     * @param arr {@link java.util.Collection} Collection where to find element
+     * @param val {@link Object} Element to find
+     * @param <T> Type of element to find
+     * @return index of given element (-1 if element not find)
+     */
     private static <T> int indexOf(T[] arr, T val) {
         return Arrays.asList(arr).indexOf(val);
     }
