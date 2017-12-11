@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context="wifi.px504.android.sebastienbourguet.fr.testwfi.MainActivity">
+    tools:context="wifi.px504.android.sebastienbourguet.fr.wifitagfinder.wifi.px504.android.sebastienbourguet.fr.wifitagfinder.MainActivity">
 
     <Spinner
         android:id="@+id/selector"

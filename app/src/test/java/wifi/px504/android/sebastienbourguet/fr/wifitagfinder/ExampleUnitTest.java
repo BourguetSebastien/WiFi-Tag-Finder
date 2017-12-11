@@ -1,4 +1,4 @@
-package wifi.px504.android.sebastienbourguet.fr.testwfi;
+package wifi.px504.android.sebastienbourguet.fr.wifitagfinder;
 
 import org.junit.Test;
 

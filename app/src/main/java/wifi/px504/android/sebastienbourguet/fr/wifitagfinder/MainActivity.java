@@ -1,4 +1,4 @@
-package wifi.px504.android.sebastienbourguet.fr.testwfi;
+package wifi.px504.android.sebastienbourguet.fr.wifitagfinder;
 
 import android.Manifest;
 import android.app.AlertDialog;
@@ -12,6 +12,7 @@ import android.net.wifi.ScanResult;
 import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.SystemClock;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
@@ -37,6 +38,7 @@ import com.jjoe64.graphview.series.LineGraphSeries;
 
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.text.SimpleDateFormat;
@@ -65,11 +67,13 @@ public class MainActivity extends AppCompatActivity {
     private static final Integer[] CHANNELS_5GHZ = {36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140};
     private static final String[] WIDTHS = {"20 MHz", "40 MHz", "80 MHz", "160 MHz", "Other"};
     // PERMISSIONS
-    private static final String[] REQUIRED_PERMISSIONS =  {Manifest.permission.ACCESS_WIFI_STATE, Manifest.permission.CHANGE_WIFI_STATE, Manifest.permission.ACCESS_COARSE_LOCATION};
+    private static final String[] REQUIRED_PERMISSIONS =  {Manifest.permission.ACCESS_WIFI_STATE, Manifest.permission.CHANGE_WIFI_STATE, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE};
     private static final int ACCESS_WIFI = 0x1234; // User defined
     private static final int CHANGE_WIFI = 0X5678; // User defined
     private static final int ACCESS_LOCATION = 0x9101; // User defined
-    private static final int CODES[] = {ACCESS_WIFI, CHANGE_WIFI, ACCESS_LOCATION};
+    private static final int WRITE_EXTERNAL = 0x9501; // User defined
+    private static final int READ_EXTERNAL = 0x9801; // User defined
+    private static final int CODES[] = {ACCESS_WIFI, CHANGE_WIFI, ACCESS_LOCATION, WRITE_EXTERNAL, READ_EXTERNAL};
 
     // UI
     private Spinner selector;
@@ -95,8 +99,11 @@ public class MainActivity extends AppCompatActivity {
     private long timeStart;
 
     // FILE
-    final private SimpleDateFormat format = new SimpleDateFormat(getString(R.string.FILE_NAME_PATTERN));
-    OutputStream outputStream;
+    private SimpleDateFormat fileFormat;
+    private SimpleDateFormat simpleFormat;
+    private File file;
+    private boolean fileOpened;
+    private OutputStream outputStream;
 
     /**
      * Method called when app is launched
@@ -118,12 +125,24 @@ public class MainActivity extends AppCompatActivity {
             wifiEnabled = checkPermissions();
         }
         if (wifiEnabled) { // Permissions granted launch scanning
-            initFile();
+            fileOpened = initFile();
             wifi.startScan();
         }
         else { // Permission not granted, functionality not working
             Toast.makeText(this, "Permissions are not granted, scan not launched", Toast.LENGTH_LONG);
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        try {
+            Log.i("FILE", "Closing file stream");
+            outputStream.close();
+            fileOpened = false;
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        super.onDestroy();
     }
 
     /**
@@ -165,7 +184,6 @@ public class MainActivity extends AppCompatActivity {
         this.levelSeries.setAnimated(true);
         this.levelSeries.setDrawBackground(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Log.i("APP", "Setting colors");
             this.levelSeries.setColor(getColor(R.color.spartanCrimson));
             this.levelSeries.setBackgroundColor(getColor(R.color.spartanCrimson));
         }
@@ -275,11 +293,13 @@ public class MainActivity extends AppCompatActivity {
         points[index] = new DataPoint(channel, ac.level);
         this.channelSeries.resetData(points);
         String separator = getString(R.string.separator);
-        String line = format("%s (%s)%s%l%s%d%s%d%s%d", ac.SSID, ac.BSSID, separator, System.currentTimeMillis(), separator, ac.level, separator, channel, separator, ac.frequency);
-        try {
-            this.outputStream.write(line.getBytes());
-        } catch (IOException e) {
-            Log.e("APP_FileSave", "Error when trying to write in a file");
+        String line = format("%s(%s)%s%s%s%d%s%d%s%d\n\r", ac.SSID, ac.BSSID, separator, simpleFormat.format(new Date(System.currentTimeMillis())), separator, ac.level, separator, channel, separator, ac.frequency);
+        if (fileOpened) {
+            try {
+                this.outputStream.write(line.getBytes());
+            } catch (IOException e) {
+                Log.e("APP_FileSave", "Error when trying to write in a file");
+            }
         }
         chronometer.setBase(SystemClock.elapsedRealtime());
         chronometer.start();
@@ -290,11 +310,16 @@ public class MainActivity extends AppCompatActivity {
      * @return False if file creation failed
      */
     private boolean initFile() {
-        String fileName = format.format(new Date(System.currentTimeMillis()));
-        File file = new File(getFilesDir(), fileName);
+        Log.i("APP_File", "App folder path = "+getFilesDir().getAbsolutePath());
+        fileFormat = new SimpleDateFormat(getString(R.string.FILE_NAME_PATTERN));
+        simpleFormat = new SimpleDateFormat(getString(R.string.DATE_FORMAT));
+        String fileName = fileFormat.format(new Date(System.currentTimeMillis()));
+        File path = null;
+        path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        file = new File(path, fileName);
         try {
-            outputStream = openFileOutput(fileName, MODE_PRIVATE);
-        } catch (FileNotFoundException e) {
+            outputStream = new FileOutputStream(file);
+        } catch (IOException e) {
             e.printStackTrace();
             return false;
         }
@@ -360,7 +385,9 @@ public class MainActivity extends AppCompatActivity {
         switch (requestCode) {
             case ACCESS_WIFI:
             case CHANGE_WIFI:
-            case ACCESS_LOCATION: {
+            case ACCESS_LOCATION:
+            case WRITE_EXTERNAL:
+            case READ_EXTERNAL: {
                 // If request is cancelled, the result arrays are empty.
                 if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                     // permission was granted, yay! Do the
